@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
 pub struct List<T> {
@@ -41,7 +41,7 @@ impl<T> List<T> {
                 // non-empty list, need to connect to old_head
                 old_head.borrow_mut().prev = Some(new_head.clone()); // +1 new_head
                 new_head.borrow_mut().next = Some(old_head);         // +1 old_head
-                self.head = Some(new_head);             // +1 new_head, -1 old_head
+                self.head = Some(new_head);                          // +1 new_head, -1 old_head
                 // total: +2 new_head, +0 old_head -- OK!
             }
             None => {
@@ -51,5 +51,72 @@ impl<T> List<T> {
                 // total: +2 new_head -- OK!
             }
         }
+    }
+    #[rustfmt::skip]
+    pub fn pop_front(&mut self) -> Option<T> {
+        // need to take old head, ensuring its -2
+        self.head.take().map(|old_head| {               // -1 old
+            match old_head.borrow_mut().next.take() {
+                Some(new_head) => {                     // -1 new
+                    // not emptying list
+                    new_head.borrow_mut().prev.take();  // -1 old
+                    self.head = Some(new_head);         // +1 new
+                }
+                None => {
+                    // emptying list
+                    self.tail.take();                   // -1 old
+                    // total: -2 old, (no new)
+                }
+            }
+            Rc::try_unwrap(old_head).ok().unwrap().into_inner().elem
+        })
+    }
+
+    pub fn peek_front(&self) -> Option<Ref<T>> {
+        self.head
+            .as_ref()
+            .map(|node| Ref::map(node.borrow(), |node| &node.elem))
+    }
+}
+
+impl<T> Drop for List<T> {
+    fn drop(&mut self) {
+        while self.pop_front().is_some() {}
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::List;
+    #[test]
+    fn basics() {
+        let mut list = List::new();
+        // Check empty list behaves right
+        assert_eq!(list.pop_front(), None);
+        // Populate list
+        list.push_front(1);
+        list.push_front(2);
+        list.push_front(3);
+        // Check normal removal
+        assert_eq!(list.pop_front(), Some(3));
+        assert_eq!(list.pop_front(), Some(2));
+        // Push some more just to make sure nothing is corrupted
+        list.push_front(4);
+        list.push_front(5);
+        // Check normal removal
+        assert_eq!(list.pop_front(), Some(5));
+        assert_eq!(list.pop_front(), Some(4));
+        // Check exhaustion
+        assert_eq!(list.pop_front(), Some(1));
+        assert_eq!(list.pop_front(), None);
+    }
+    #[test]
+    fn peek() {
+        let mut list = List::new();
+        assert!(list.peek_front().is_none());
+        list.push_front(1);
+        list.push_front(2);
+        list.push_front(3);
+        assert_eq!(&*list.peek_front().unwrap(), &3);
     }
 }
